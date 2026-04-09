@@ -54,8 +54,8 @@ async function run() {
     const usersCollections = abcDB.collection("usersCollections");
     const paymentsCollections = abcDB.collection("paymentsCollections");
     const tasksCollections = abcDB.collection("taskCollections");
-    const gatewayCollections = abcDB.collection("gatewayCollections")
-    const offerCollections = abcDB.collection("offerCollections")
+    const gatewayCollections = abcDB.collection("gatewayCollections");
+    const offerCollections = abcDB.collection("offerCollections");
 
     // user--------------------------------------------------------
 
@@ -115,80 +115,98 @@ async function run() {
     });
     // add user api
     app.post("/create-user", async (req, res) => {
-  try {
-    const userData = req.body;
-    console.log(userData);
+      try {
+        const userData = req.body;
+        console.log(userData);
 
-    // ✅ Basic validation
-    if (!userData.phone && !userData.email) {
-      return res.status(400).json({ success: false, message: "Email or Phone is required" });
-    }
-    if (!userData.password) {
-      return res.status(400).json({ success: false, message: "Password is required" });
-    }
+        // ✅ Basic validation
+        if (!userData.phone && !userData.email) {
+          return res
+            .status(400)
+            .json({ success: false, message: "Email or Phone is required" });
+        }
+        if (!userData.password) {
+          return res
+            .status(400)
+            .json({ success: false, message: "Password is required" });
+        }
 
-    // ✅ Check duplicate user
-    if (userData.phone) {
-      const existingPhoneUser = await usersCollections.findOne({ phone: userData.phone });
-      if (existingPhoneUser) {
-        return res.status(409).json({ success: false, message: "Phone number already registered" });
+        // ✅ Check duplicate user
+        if (userData.phone) {
+          const existingPhoneUser = await usersCollections.findOne({
+            phone: userData.phone,
+          });
+          if (existingPhoneUser) {
+            return res
+              .status(409)
+              .json({
+                success: false,
+                message: "Phone number already registered",
+              });
+          }
+        }
+        if (userData.email) {
+          const existingEmailUser = await usersCollections.findOne({
+            email: userData.email,
+          });
+          if (existingEmailUser) {
+            return res
+              .status(409)
+              .json({ success: false, message: "Email already registered" });
+          }
+        }
+
+        // ✅ Generate 8-digit random ID
+        const generateRandomId = () =>
+          Math.floor(10000000 + Math.random() * 90000000).toString();
+
+        // ✅ Hash password
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(userData.password, salt);
+
+        // ✅ Create user object
+        const newUser = {
+          ...userData,
+          password: hashedPassword,
+          userId: generateRandomId(),
+          role: "user",
+          status: "active",
+          available_balance: 22,
+        };
+
+        // ✅ Insert into database
+        await usersCollections.insertOne(newUser);
+
+        // ✅ Auto-login: create token
+        const token = jwt.sign(
+          {
+            userId: newUser.userId,
+            email: newUser.email,
+            role: newUser.role,
+          },
+          process.env.JWT_SECRET,
+          { expiresIn: "7d" },
+        );
+
+        // ✅ Send same login response
+        res.status(201).json({
+          success: true,
+          message: "User created successfully",
+          token,
+          user: {
+            userId: newUser.userId,
+            email: newUser.email,
+            phone: newUser.phone,
+            role: newUser.role,
+          },
+        });
+      } catch (error) {
+        console.error(error);
+        res
+          .status(500)
+          .json({ success: false, message: "Server Error occurred" });
       }
-    }
-    if (userData.email) {
-      const existingEmailUser = await usersCollections.findOne({ email: userData.email });
-      if (existingEmailUser) {
-        return res.status(409).json({ success: false, message: "Email already registered" });
-      }
-    }
-
-    // ✅ Generate 8-digit random ID
-    const generateRandomId = () => Math.floor(10000000 + Math.random() * 90000000).toString();
-
-    // ✅ Hash password
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(userData.password, salt);
-
-    // ✅ Create user object
-    const newUser = {
-      ...userData,
-      password: hashedPassword,
-      userId: generateRandomId(),
-      role: "user",
-      status: "active",
-      available_balance: 22,
-    };
-
-    // ✅ Insert into database
-    await usersCollections.insertOne(newUser);
-
-    // ✅ Auto-login: create token
-    const token = jwt.sign(
-      {
-        userId: newUser.userId,
-        email: newUser.email,
-        role: newUser.role,
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: "7d" }
-    );
-
-    // ✅ Send same login response
-    res.status(201).json({
-      success: true,
-      message: "User created successfully",
-      token,
-      user: {
-        userId: newUser.userId,
-        email: newUser.email,
-        phone: newUser.phone,
-        role: newUser.role,
-      },
     });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ success: false, message: "Server Error occurred" });
-  }
-});
 
     app.post("/login", async (req, res) => {
       try {
@@ -347,6 +365,91 @@ async function run() {
           .json({ success: false, message: "Failed to update status" });
       }
     });
+
+    app.post("/add-payment", async (req, res) => {
+      try {
+        const { transactionId, amount, method, status, userId } = req.body;
+
+        // Validation
+        if (!transactionId || !amount || !method || !userId) {
+          return res.status(400).json({
+            success: false,
+            message: "Required fields missing",
+          });
+        }
+
+        // 🇧🇩 Bangladesh Time
+        const bdDate = new Date().toLocaleString("en-US", {
+          timeZone: "Asia/Dhaka",
+        });
+
+        const paymentData = {
+          transactionId,
+          amount: Number(amount),
+          method,
+          status: "Pending",
+          userId,
+          transactionDate: new Date(bdDate),
+          createdAt: new Date(),
+        };
+
+        const result = await paymentsCollections.insertOne(paymentData);
+
+        res.status(201).json({
+          success: true,
+          message: "Payment Added Successfully",
+          data: result,
+        });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({
+          success: false,
+          message: "Server Error occurred",
+        });
+      }
+    });
+    // ---------------- add money
+    // Add Money API
+   app.post("/user/add-money", async (req, res) => {
+  try {
+    const { userId, amount } = req.body;
+
+    if (!userId || !amount || amount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "userId and valid amount are required",
+      });
+    }
+
+    const updatedUser = await usersCollections.findOneAndUpdate(
+      { userId },
+      { $inc: { available_balance: Number(amount) } },
+      { returnDocument: "after" }
+    );
+
+    if (!updatedUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `$${amount} added successfully`,
+      available_balance: updatedUser.available_balance,
+    });
+
+  } catch (err) {
+    console.error("Add Money Error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+});
+
+    //
 
     // payments ENd
     // task-------------------------------------------
@@ -659,179 +762,176 @@ async function run() {
 
     // -------------------front end Task end
 
-//  gateway Start
-// payment gateway route
-app.post("/payment-gateway", async (req, res) => {
-  try {
-    const gatewayData = req.body;
+    //  gateway Start
+    // payment gateway route
+    app.post("/payment-gateway", async (req, res) => {
+      try {
+        const gatewayData = req.body;
 
-    // basic validation
-    if (!gatewayData) {
-      return res.status(400).send({
-        success: false,
-        message: "Gateway data is required",
-      });
-    }
+        // basic validation
+        if (!gatewayData) {
+          return res.status(400).send({
+            success: false,
+            message: "Gateway data is required",
+          });
+        }
 
-    // insert into gatewayCollection
-    const result = await gatewayCollections.insertOne(gatewayData);
+        // insert into gatewayCollection
+        const result = await gatewayCollections.insertOne(gatewayData);
 
-    res.send({
-      success: true,
-      message: "Payment gateway added successfully",
-      data: result,
+        res.send({
+          success: true,
+          message: "Payment gateway added successfully",
+          data: result,
+        });
+      } catch (error) {
+        console.error("Payment Gateway Error:", error);
+
+        res.status(500).send({
+          success: false,
+          message: "Server Error",
+        });
+      }
     });
-  } catch (error) {
-    console.error("Payment Gateway Error:", error);
+    // GET all payment gateways
+    app.get("/payment-gateway", async (req, res) => {
+      try {
+        const gateways = await gatewayCollections.find().toArray();
 
-    res.status(500).send({
-      success: false,
-      message: "Server Error",
-    });
-  }
-});
-// GET all payment gateways
-app.get("/payment-gateway", async (req, res) => {
-  try {
-    const gateways = await gatewayCollections.find().toArray();
+        res.send({
+          success: true,
+          data: gateways,
+        });
+      } catch (error) {
+        console.error("Get Gateway Error:", error);
 
-    res.send({
-      success: true,
-      data: gateways,
-    });
-  } catch (error) {
-    console.error("Get Gateway Error:", error);
-
-    res.status(500).send({
-      success: false,
-      message: "Server Error",
-    });
-  }
-});
-
-
-
-app.delete("/payment-gateway/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
-
-    const query = { _id: new ObjectId(id) };
-
-    const result = await gatewayCollections.deleteOne(query);
-
-    if (result.deletedCount === 0) {
-      return res.status(404).send({
-        success: false,
-        message: "Gateway not found",
-      });
-    }
-
-    res.send({
-      success: true,
-      message: "Gateway deleted successfully",
-      result,
-    });
-  } catch (error) {
-    console.error("Delete Gateway Error:", error);
-
-    res.status(500).send({
-      success: false,
-      message: "Server Error",
-    });
-  }
-});
-
-// gateway END
-
-// offer start-------------
-app.post("/offer", async (req, res) => {
-  try {
-    const offerData = req.body;
-
-    // basic validation
-    if (!offerData) {
-      return res.status(400).send({
-        success: false,
-        message: "Offer title and description are required",
-      });
-    }
-
-    // insert into offers collection
-    const result = await offerCollections.insertOne({
-      ...offerData,
-      createdAt: new Date(),
+        res.status(500).send({
+          success: false,
+          message: "Server Error",
+        });
+      }
     });
 
-    res.send({
-      success: true,
-      message: "Offer added successfully",
-      data: result,
+    app.delete("/payment-gateway/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+
+        const query = { _id: new ObjectId(id) };
+
+        const result = await gatewayCollections.deleteOne(query);
+
+        if (result.deletedCount === 0) {
+          return res.status(404).send({
+            success: false,
+            message: "Gateway not found",
+          });
+        }
+
+        res.send({
+          success: true,
+          message: "Gateway deleted successfully",
+          result,
+        });
+      } catch (error) {
+        console.error("Delete Gateway Error:", error);
+
+        res.status(500).send({
+          success: false,
+          message: "Server Error",
+        });
+      }
     });
-  } catch (error) {
-    console.error("Offer API Error:", error);
-    res.status(500).send({
-      success: false,
-      message: "Server Error",
+
+    // gateway END
+
+    // offer start-------------
+    app.post("/offer", async (req, res) => {
+      try {
+        const offerData = req.body;
+
+        // basic validation
+        if (!offerData) {
+          return res.status(400).send({
+            success: false,
+            message: "Offer title and description are required",
+          });
+        }
+
+        // insert into offers collection
+        const result = await offerCollections.insertOne({
+          ...offerData,
+          createdAt: new Date(),
+        });
+
+        res.send({
+          success: true,
+          message: "Offer added successfully",
+          data: result,
+        });
+      } catch (error) {
+        console.error("Offer API Error:", error);
+        res.status(500).send({
+          success: false,
+          message: "Server Error",
+        });
+      }
     });
-  }
-});
 
+    app.get("/offers", async (req, res) => {
+      try {
+        const offers = await offerCollections
+          .find() // get all offers
 
-app.get("/offers", async (req, res) => {
-  try {
-    const offers = await offerCollections
-      .find() // get all offers
-  
-      .toArray();
+          .toArray();
 
-    res.send({
-      success: true,
-      data: offers,
+        res.send({
+          success: true,
+          data: offers,
+        });
+      } catch (error) {
+        console.error("Get Offers Error:", error);
+        res.status(500).send({
+          success: false,
+          message: "Server Error",
+        });
+      }
     });
-  } catch (error) {
-    console.error("Get Offers Error:", error);
-    res.status(500).send({
-      success: false,
-      message: "Server Error",
+    app.delete("/offer/:id", async (req, res) => {
+      try {
+        const offerId = req.params.id;
+
+        if (!offerId) {
+          return res.status(400).send({
+            success: false,
+            message: "Offer ID is required",
+          });
+        }
+
+        const result = await offerCollections.deleteOne({
+          _id: new ObjectId(offerId),
+        });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).send({
+            success: false,
+            message: "Offer not found",
+          });
+        }
+
+        res.send({
+          success: true,
+          message: "Offer deleted successfully",
+          data: result,
+        });
+      } catch (error) {
+        console.error("Delete Offer Error:", error);
+        res.status(500).send({
+          success: false,
+          message: "Server Error",
+        });
+      }
     });
-  }
-});
-app.delete("/offer/:id", async (req, res) => {
-  try {
-    const offerId = req.params.id;
-
-    if (!offerId) {
-      return res.status(400).send({
-        success: false,
-        message: "Offer ID is required",
-      });
-    }
-
-    const result = await offerCollections.deleteOne({ _id: new ObjectId(offerId) });
-
-    if (result.deletedCount === 0) {
-      return res.status(404).send({
-        success: false,
-        message: "Offer not found",
-      });
-    }
-
-    res.send({
-      success: true,
-      message: "Offer deleted successfully",
-      data: result,
-    });
-  } catch (error) {
-    console.error("Delete Offer Error:", error);
-    res.status(500).send({
-      success: false,
-      message: "Server Error",
-    });
-  }
-});
-// offer END===========================
-
-
+    // offer END===========================
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
@@ -839,7 +939,6 @@ app.delete("/offer/:id", async (req, res) => {
       "Pinged your deployment. You successfully connected to MongoDB!",
     );
   } finally {
-   
     // await client.close();
   }
 }
