@@ -4,6 +4,9 @@ const app = express();
 const bcrypt = require("bcryptjs");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
+const dayjs = require("dayjs");
+const utc = require("dayjs/plugin/utc");
+const timezone = require("dayjs/plugin/timezone");
 
 const port = 5000;
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
@@ -12,7 +15,8 @@ const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 app.use(cors());
 app.use(express.json());
 console.log(process.env.JWT_SECRET);
-
+dayjs.extend(utc);
+dayjs.extend(timezone);
 const uri = "mongodb://localhost:27017";
 const verifyToken = (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -37,6 +41,33 @@ const verifyToken = (req, res, next) => {
     });
   }
 };
+const verifyAdmin = (req, res, next) => {
+  try {
+    // user info already attached from verifyToken
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    if (req.user.role !== "Admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied: Admin only",
+      });
+    }
+   
+    next();
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Server error in admin middleware",
+    });
+  }
+};
+
+
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
   serverApi: {
@@ -56,26 +87,35 @@ async function run() {
     const tasksCollections = abcDB.collection("taskCollections");
     const gatewayCollections = abcDB.collection("gatewayCollections");
     const offerCollections = abcDB.collection("offerCollections");
+    const payOutCollections = abcDB.collection("payOutCollections");
+    const adminCollections = abcDB.collection("adminCollections");
 
     // user--------------------------------------------------------
 
     // GET /all-users?userId=8392746150
-    app.get("/all-users", async (req, res) => {
+    app.get("/all-users",verifyToken,verifyAdmin, async (req, res) => {
       try {
-        const { userId } = req.query;
+        const { userId, level } = req.query; // get both userId and level
 
         let filter = {};
+
+        // If userId is provided, search with regex (partial match)
         if (userId) {
-          filter = { userId }; // exact match
+          filter.userId = { $regex: userId, $options: "i" };
+        }
+
+        // If level is provided, filter by level
+        if (level) {
+          filter.level = level;
         }
 
         const users = await usersCollections.find(filter).toArray();
 
-        // ✅ Always return 200 with data array, even if empty
+        // Always return 200 with data array, even if empty
         res.status(200).json({
           success: true,
           total: users.length,
-          data: users, // empty array if no users found
+          data: users,
         });
       } catch (err) {
         console.error(err);
@@ -87,10 +127,9 @@ async function run() {
     });
     // single user
 
-    app.get("/user/:id", async (req, res) => {
+    app.get("/user/:id",verifyToken,verifyAdmin, async (req, res) => {
       try {
         const { id } = req.params; // get userId from URL
-        console.log(id);
 
         const user = await usersCollections.findOne({ userId: id });
 
@@ -137,12 +176,10 @@ async function run() {
             phone: userData.phone,
           });
           if (existingPhoneUser) {
-            return res
-              .status(409)
-              .json({
-                success: false,
-                message: "Phone number already registered",
-              });
+            return res.status(409).json({
+              success: false,
+              message: "Phone number already registered",
+            });
           }
         }
         if (userData.email) {
@@ -170,6 +207,7 @@ async function run() {
           password: hashedPassword,
           userId: generateRandomId(),
           role: "user",
+          level: "Basic",
           status: "active",
           available_balance: 22,
         };
@@ -320,7 +358,7 @@ async function run() {
       }
     });
 
-    app.get("/all-payments", async (req, res) => {
+    app.get("/all-payments",verifyToken,verifyAdmin, async (req, res) => {
       try {
         const { transactionId, status } = req.query;
 
@@ -344,6 +382,36 @@ async function run() {
         });
       }
     });
+    // total payment
+    app.get("/total-completed-payments", async (req, res) => {
+  try {
+    const result = await paymentsCollections.aggregate([
+      {
+        $match: { status: "Completed" } // filter only completed payments
+      },
+      {
+        $group: {
+          _id: null,
+          totalAmount: { $sum: "$amount" }, // sum of all amounts
+          totalTransactions: { $sum: 1 } // count of completed payments
+        }
+      }
+    ]).toArray();
+
+    res.status(200).json({
+      success: true,
+      totalAmount: result[0]?.totalAmount || 0,
+      totalTransactions: result[0]?.totalTransactions || 0
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      success: false,
+      message: "Server Error occurred"
+    });
+  }
+});
     // update status
     app.patch("/payments/:id", async (req, res) => {
       try {
@@ -410,52 +478,191 @@ async function run() {
     });
     // ---------------- add money
     // Add Money API
-   app.post("/user/add-money", async (req, res) => {
+    app.post("/user/add-money",verifyToken,verifyAdmin, async (req, res) => {
+      try {
+        const { userId, amount } = req.body;
+
+        if (!userId || !amount || amount <= 0) {
+          return res.status(400).json({
+            success: false,
+            message: "userId and valid amount are required",
+          });
+        }
+
+        const updatedUser = await usersCollections.findOneAndUpdate(
+          { userId },
+          { $inc: { available_balance: Number(amount) } },
+          { returnDocument: "after" },
+        );
+
+        if (!updatedUser) {
+          return res.status(404).json({
+            success: false,
+            message: "User not found",
+          });
+        }
+
+        res.status(200).json({
+          success: true,
+          message: `$${amount} added successfully`,
+          available_balance: updatedUser.available_balance,
+        });
+      } catch (err) {
+        console.error("Add Money Error:", err);
+        res.status(500).json({
+          success: false,
+          message: "Server Error",
+        });
+      }
+    });
+
+    //
+
+    // payout money
+    app.post("/user/payout",verifyToken,verifyAdmin, async (req, res) => {
+      try {
+        const { userId, amount } = req.body;
+
+        // Validation
+        if (!userId || !amount || amount <= 0) {
+          return res.status(400).json({
+            success: false,
+            message: "userId and valid amount required",
+          });
+        }
+
+        // Find user
+        const user = await usersCollections.findOne({ userId });
+
+        if (!user) {
+          return res.status(404).json({
+            success: false,
+            message: "User not found",
+          });
+        }
+
+        // ✅ Check balance
+        if ((user.available_balance || 0) < amount) {
+          return res.status(400).json({
+            success: false,
+            message: "Insufficient balance",
+          });
+        }
+
+        // ✅ Deduct balance
+        const updatedUser = await usersCollections.findOneAndUpdate(
+          { userId },
+          {
+            $inc: { available_balance: -Number(amount) }, // MINUS MONEY
+          },
+          { returnDocument: "after" },
+        );
+
+        // ✅ Save payout history
+        try {
+          const payoutResult = await payOutCollections.insertOne({
+            userId,
+            amount: Number(amount),
+            type: "payout",
+            status: "completed",
+            time: dayjs().tz("Asia/Dhaka").toDate(),
+          });
+          console.log("Payout inserted:", payoutResult.insertedId);
+        } catch (err) {
+          console.error("Failed to insert payout:", err);
+        }
+
+        res.status(200).json({
+          success: true,
+          message: `৳${amount} payout successful`,
+          available_balance: updatedUser.available_balance,
+        });
+      } catch (err) {
+        console.error("Payout Error:", err);
+        res.status(500).json({
+          success: false,
+          message: "Server Error",
+        });
+      }
+    });
+    // payout
+
+    // GET /payouts?userId=123
+    app.get("/payouts",verifyToken,verifyAdmin, async (req, res) => {
+      try {
+        const { userId } = req.query;
+
+        let filter = {};
+
+        // Optional filter by userId
+        if (userId) {
+          filter.userId = userId;
+        }
+
+        // Fetch payouts from DB
+        const payouts = await payOutCollections.find(filter).toArray();
+
+        // Return structured response
+        res.status(200).json({
+          success: true,
+          total: payouts.length,
+          data: payouts,
+        });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({
+          success: false,
+          message: "Server Error occurred",
+        });
+      }
+    });
+// totalPayout
+
+app.get("/total-payouts",verifyToken,verifyAdmin, async (req, res) => {
   try {
-    const { userId, amount } = req.body;
+    const { userId } = req.query;
 
-    if (!userId || !amount || amount <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: "userId and valid amount are required",
-      });
+    let matchStage = {};
+
+    // Optional filter by userId
+    if (userId) {
+      matchStage.userId = userId;
     }
 
-    const updatedUser = await usersCollections.findOneAndUpdate(
-      { userId },
-      { $inc: { available_balance: Number(amount) } },
-      { returnDocument: "after" }
-    );
-
-    if (!updatedUser) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found",
-      });
-    }
+    const result = await payOutCollections.aggregate([
+      {
+        $match: matchStage,
+      },
+      {
+        $group: {
+          _id: null,
+          totalAmount: { $sum: "$amount" }, // sum of payouts
+          totalTransactions: { $sum: 1 },   // count of payouts
+        },
+      },
+    ]).toArray();
 
     res.status(200).json({
       success: true,
-      message: `$${amount} added successfully`,
-      available_balance: updatedUser.available_balance,
+      totalAmount: result[0]?.totalAmount || 0,
+      totalTransactions: result[0]?.totalTransactions || 0,
     });
 
   } catch (err) {
-    console.error("Add Money Error:", err);
+    console.error(err);
     res.status(500).json({
       success: false,
-      message: "Server Error",
+      message: "Server Error occurred",
     });
   }
 });
 
-    //
 
     // payments ENd
     // task-------------------------------------------
 
     // ADD TASK
-    app.post("/tasks", async (req, res) => {
+    app.post("/tasks", verifyToken,verifyAdmin, async (req, res) => {
       try {
         const task = req.body;
 
@@ -560,7 +767,7 @@ async function run() {
     });
 
     // DELETE TASK BY ID
-    app.delete("/tasks/:id", async (req, res) => {
+    app.delete("/tasks/:id",verifyToken,verifyAdmin, async (req, res) => {
       try {
         const { id } = req.params;
 
@@ -764,7 +971,7 @@ async function run() {
 
     //  gateway Start
     // payment gateway route
-    app.post("/payment-gateway", async (req, res) => {
+    app.post("/payment-gateway",verifyToken,verifyAdmin, async (req, res) => {
       try {
         const gatewayData = req.body;
 
@@ -794,7 +1001,7 @@ async function run() {
       }
     });
     // GET all payment gateways
-    app.get("/payment-gateway", async (req, res) => {
+    app.get("/payment-gateway",verifyToken,verifyAdmin, async (req, res) => {
       try {
         const gateways = await gatewayCollections.find().toArray();
 
@@ -812,7 +1019,7 @@ async function run() {
       }
     });
 
-    app.delete("/payment-gateway/:id", async (req, res) => {
+    app.delete("/payment-gateway/:id",verifyToken,verifyAdmin, async (req, res) => {
       try {
         const id = req.params.id;
 
@@ -845,7 +1052,7 @@ async function run() {
     // gateway END
 
     // offer start-------------
-    app.post("/offer", async (req, res) => {
+    app.post("/offer",verifyToken,verifyAdmin, async (req, res) => {
       try {
         const offerData = req.body;
 
@@ -896,7 +1103,7 @@ async function run() {
         });
       }
     });
-    app.delete("/offer/:id", async (req, res) => {
+    app.delete("/offer/:id",verifyToken,verifyAdmin, async (req, res) => {
       try {
         const offerId = req.params.id;
 
@@ -933,6 +1140,150 @@ async function run() {
     });
     // offer END===========================
 
+    // dashboard login system
+
+    app.post("/login-dashboard", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // Validation
+    if (!email && !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Email or Passwrod is required",
+      });
+    }
+
+   
+
+    // Find user
+    const query = email ? { email } : { phone };
+    const user = await usersCollections.findOne(query);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Compare password
+    const isMatch = await bcrypt.compare(password, user.password);
+
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials",
+      });
+    }
+
+    // Generate JWT Token
+    const token = jwt.sign(
+      {
+        userId: user.userId,
+        email: user.email,
+        role: user.role,
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Login successful",
+      token,
+      user: {
+        userId: user.userId,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        level: user.level,
+        status: user.status,
+      },
+    });
+  } catch (error) {
+    console.error("Login Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+});
+app.post("/create-admin", async (req, res) => {
+  try {
+    const { email, password ,phone} = req.body;
+
+    // ✅ Validation
+    if (!email && !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Email and Password are required",
+      });
+    }
+
+    // ✅ Check existing user
+    const existingUser = await adminCollections.findOne({
+      $or: [{ email }, { phone }],
+    });
+
+    if (existingUser) {
+      return res.status(409).json({
+        success: false,
+        message: "User already exists",
+      });
+    }
+
+    // ✅ Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // ✅ Create user object
+    const newUser = {
+     
+      email,
+      phone: phone || null,
+      password: hashedPassword,
+      role: "Admin",
+      status: "active",
+      createdAt: new Date(),
+    };
+
+    // ✅ Insert user
+    await usersCollections.insertOne(newUser);
+
+    // ✅ Generate Token (optional)
+    const token = jwt.sign(
+      {
+        
+        email: newUser.email,
+        role: newUser.role,
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    // ✅ Response
+    res.status(201).json({
+      success: true,
+      message: "User created successfully",
+      token,
+      user: {
+      
+        email: newUser.email,
+        phone: newUser.phone,
+        role: newUser.role,
+       
+        status: newUser.status,
+      },
+    });
+  } catch (error) {
+    console.error("Create User Error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
+  }
+});
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
     console.log(
