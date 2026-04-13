@@ -322,7 +322,7 @@ async function run() {
     // payments--------------------------------
     // payments--------------------------------
     // user account balance
-    app.get("/user/balance/:userId", async (req, res) => {
+    app.get("/user/balance/:userId",verifyToken, async (req, res) => {
       try {
         const { userId } = req.params;
 
@@ -702,7 +702,7 @@ app.get("/total-payouts",verifyToken,verifyAdmin, async (req, res) => {
         });
       }
     });
-    app.get("/tasks", async (req, res) => {
+    app.get("/tasks",verifyToken, async (req, res) => {
       const tasks = await tasksCollections.find().toArray();
 
       res.send({
@@ -711,7 +711,7 @@ app.get("/total-payouts",verifyToken,verifyAdmin, async (req, res) => {
         data: tasks,
       });
     });
-    app.get("/tasks/:taskId", async (req, res) => {
+    app.get("/tasks/:taskId",verifyToken, async (req, res) => {
       const { taskId } = req.params;
 
       try {
@@ -739,7 +739,7 @@ app.get("/total-payouts",verifyToken,verifyAdmin, async (req, res) => {
       }
     });
 
-    app.patch("/tasks/:taskId", async (req, res) => {
+    app.patch("/tasks/:taskId",verifyToken, async (req, res) => {
       const { taskId } = req.params;
       const updateData = req.body;
 
@@ -806,7 +806,7 @@ app.get("/total-payouts",verifyToken,verifyAdmin, async (req, res) => {
 
     // front-end Task
     // Mark a task as completed by a user and return updated completedTasks
-    app.patch("/task/complete", async (req, res) => {
+    app.patch("/task/complete",verifyToken,async (req, res) => {
       try {
         const { userId, taskId } = req.body;
 
@@ -852,7 +852,7 @@ app.get("/total-payouts",verifyToken,verifyAdmin, async (req, res) => {
     // GET completed tasks for a user with full task details
 
     // Get completed tasks for a user
-    app.get("/tasks/complete/:userId", async (req, res) => {
+    app.get("/tasks/complete/:userId",verifyToken, async (req, res) => {
       try {
         const { userId } = req.params;
 
@@ -918,7 +918,7 @@ app.get("/total-payouts",verifyToken,verifyAdmin, async (req, res) => {
 
     // pay user
     // Pay user a certain amount
-    app.post("/tasks/pay-user", async (req, res) => {
+    app.post("/tasks/pay-user",verifyToken, async (req, res) => {
       try {
         const { userId, amount } = req.body;
 
@@ -1084,7 +1084,7 @@ app.get("/total-payouts",verifyToken,verifyAdmin, async (req, res) => {
       }
     });
 
-    app.get("/offers", async (req, res) => {
+    app.get("/offers",verifyToken, async (req, res) => {
       try {
         const offers = await offerCollections
           .find() // get all offers
