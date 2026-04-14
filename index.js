@@ -57,7 +57,7 @@ const verifyAdmin = (req, res, next) => {
         message: "Access denied: Admin only",
       });
     }
-   
+
     next();
   } catch (error) {
     res.status(500).json({
@@ -66,7 +66,6 @@ const verifyAdmin = (req, res, next) => {
     });
   }
 };
-
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
@@ -88,12 +87,15 @@ async function run() {
     const gatewayCollections = abcDB.collection("gatewayCollections");
     const offerCollections = abcDB.collection("offerCollections");
     const payOutCollections = abcDB.collection("payOutCollections");
+    const payOutRequestCollections = abcDB.collection(
+      "payOutRequestCollection",
+    );
     const adminCollections = abcDB.collection("adminCollections");
 
     // user--------------------------------------------------------
 
     // GET /all-users?userId=8392746150
-    app.get("/all-users",verifyToken,verifyAdmin, async (req, res) => {
+    app.get("/all-users", verifyToken, verifyAdmin, async (req, res) => {
       try {
         const { userId, level } = req.query; // get both userId and level
 
@@ -127,7 +129,7 @@ async function run() {
     });
     // single user
 
-    app.get("/user/:id",verifyToken,verifyAdmin, async (req, res) => {
+    app.get("/user/:id", verifyToken, verifyAdmin, async (req, res) => {
       try {
         const { id } = req.params; // get userId from URL
 
@@ -322,7 +324,7 @@ async function run() {
     // payments--------------------------------
     // payments--------------------------------
     // user account balance
-    app.get("/user/balance/:userId",verifyToken, async (req, res) => {
+    app.get("/user/balance/:userId", verifyToken, async (req, res) => {
       try {
         const { userId } = req.params;
 
@@ -358,7 +360,7 @@ async function run() {
       }
     });
 
-    app.get("/all-payments",verifyToken,verifyAdmin, async (req, res) => {
+    app.get("/all-payments", verifyToken, verifyAdmin, async (req, res) => {
       try {
         const { transactionId, status } = req.query;
 
@@ -367,7 +369,10 @@ async function run() {
         if (transactionId) filter.transactionId = transactionId;
         if (status) filter.status = status;
 
-        const payments = await paymentsCollections.find(filter).toArray();
+        const payments = await paymentsCollections
+          .find(filter)
+          .sort({ createdAt: -1 })
+          .toArray();
 
         res.status(200).json({
           success: true,
@@ -382,36 +387,67 @@ async function run() {
         });
       }
     });
+    app.get("/user-payments", verifyToken, async (req, res) => {
+      try {
+        const { userId } = req.query;
+
+        // ✅ Filter
+        let filter = {};
+
+        if (userId) {
+          filter.userId = userId;
+        }
+
+        const payments = await paymentsCollections
+          .find(filter)
+          .sort({ createdAt: -1 }) // optional: latest first
+          .toArray();
+
+        res.status(200).json({
+          success: true,
+          total: payments.length,
+          data: payments,
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({
+          success: false,
+          message: "Server Error occurred",
+        });
+      }
+    });
+
     // total payment
     app.get("/total-completed-payments", async (req, res) => {
-  try {
-    const result = await paymentsCollections.aggregate([
-      {
-        $match: { status: "Completed" } // filter only completed payments
-      },
-      {
-        $group: {
-          _id: null,
-          totalAmount: { $sum: "$amount" }, // sum of all amounts
-          totalTransactions: { $sum: 1 } // count of completed payments
-        }
+      try {
+        const result = await paymentsCollections
+          .aggregate([
+            {
+              $match: { status: "Completed" }, // filter only completed payments
+            },
+            {
+              $group: {
+                _id: null,
+                totalAmount: { $sum: "$amount" }, // sum of all amounts
+                totalTransactions: { $sum: 1 }, // count of completed payments
+              },
+            },
+          ])
+          .toArray();
+
+        res.status(200).json({
+          success: true,
+          totalAmount: result[0]?.totalAmount || 0,
+          totalTransactions: result[0]?.totalTransactions || 0,
+        });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({
+          success: false,
+          message: "Server Error occurred",
+        });
       }
-    ]).toArray();
-
-    res.status(200).json({
-      success: true,
-      totalAmount: result[0]?.totalAmount || 0,
-      totalTransactions: result[0]?.totalTransactions || 0
     });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({
-      success: false,
-      message: "Server Error occurred"
-    });
-  }
-});
     // update status
     app.patch("/payments/:id", async (req, res) => {
       try {
@@ -478,7 +514,7 @@ async function run() {
     });
     // ---------------- add money
     // Add Money API
-    app.post("/user/add-money",verifyToken,verifyAdmin, async (req, res) => {
+    app.post("/user/add-money", verifyToken, verifyAdmin, async (req, res) => {
       try {
         const { userId, amount } = req.body;
 
@@ -519,7 +555,7 @@ async function run() {
     //
 
     // payout money
-    app.post("/user/payout",verifyToken,verifyAdmin, async (req, res) => {
+    app.post("/user/payout", verifyToken, verifyAdmin, async (req, res) => {
       try {
         const { userId, amount } = req.body;
 
@@ -588,7 +624,7 @@ async function run() {
     // payout
 
     // GET /payouts?userId=123
-    app.get("/payouts",verifyToken,verifyAdmin, async (req, res) => {
+    app.get("/payouts", verifyToken, verifyAdmin, async (req, res) => {
       try {
         const { userId } = req.query;
 
@@ -616,53 +652,53 @@ async function run() {
         });
       }
     });
-// totalPayout
+    // totalPayout
 
-app.get("/total-payouts",verifyToken,verifyAdmin, async (req, res) => {
-  try {
-    const { userId } = req.query;
+    app.get("/total-payouts", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const { userId } = req.query;
 
-    let matchStage = {};
+        let matchStage = {};
 
-    // Optional filter by userId
-    if (userId) {
-      matchStage.userId = userId;
-    }
+        // Optional filter by userId
+        if (userId) {
+          matchStage.userId = userId;
+        }
 
-    const result = await payOutCollections.aggregate([
-      {
-        $match: matchStage,
-      },
-      {
-        $group: {
-          _id: null,
-          totalAmount: { $sum: "$amount" }, // sum of payouts
-          totalTransactions: { $sum: 1 },   // count of payouts
-        },
-      },
-    ]).toArray();
+        const result = await payOutCollections
+          .aggregate([
+            {
+              $match: matchStage,
+            },
+            {
+              $group: {
+                _id: null,
+                totalAmount: { $sum: "$amount" }, // sum of payouts
+                totalTransactions: { $sum: 1 }, // count of payouts
+              },
+            },
+          ])
+          .toArray();
 
-    res.status(200).json({
-      success: true,
-      totalAmount: result[0]?.totalAmount || 0,
-      totalTransactions: result[0]?.totalTransactions || 0,
+        res.status(200).json({
+          success: true,
+          totalAmount: result[0]?.totalAmount || 0,
+          totalTransactions: result[0]?.totalTransactions || 0,
+        });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({
+          success: false,
+          message: "Server Error occurred",
+        });
+      }
     });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({
-      success: false,
-      message: "Server Error occurred",
-    });
-  }
-});
-
 
     // payments ENd
     // task-------------------------------------------
 
     // ADD TASK
-    app.post("/tasks", verifyToken,verifyAdmin, async (req, res) => {
+    app.post("/tasks", verifyToken, verifyAdmin, async (req, res) => {
       try {
         const task = req.body;
 
@@ -702,7 +738,7 @@ app.get("/total-payouts",verifyToken,verifyAdmin, async (req, res) => {
         });
       }
     });
-    app.get("/tasks",verifyToken, async (req, res) => {
+    app.get("/tasks", verifyToken, async (req, res) => {
       const tasks = await tasksCollections.find().toArray();
 
       res.send({
@@ -711,7 +747,7 @@ app.get("/total-payouts",verifyToken,verifyAdmin, async (req, res) => {
         data: tasks,
       });
     });
-    app.get("/tasks/:taskId",verifyToken, async (req, res) => {
+    app.get("/tasks/:taskId", verifyToken, async (req, res) => {
       const { taskId } = req.params;
 
       try {
@@ -739,7 +775,7 @@ app.get("/total-payouts",verifyToken,verifyAdmin, async (req, res) => {
       }
     });
 
-    app.patch("/tasks/:taskId",verifyToken, async (req, res) => {
+    app.patch("/tasks/:taskId", verifyToken, async (req, res) => {
       const { taskId } = req.params;
       const updateData = req.body;
 
@@ -767,7 +803,7 @@ app.get("/total-payouts",verifyToken,verifyAdmin, async (req, res) => {
     });
 
     // DELETE TASK BY ID
-    app.delete("/tasks/:id",verifyToken,verifyAdmin, async (req, res) => {
+    app.delete("/tasks/:id", verifyToken, verifyAdmin, async (req, res) => {
       try {
         const { id } = req.params;
 
@@ -806,7 +842,7 @@ app.get("/total-payouts",verifyToken,verifyAdmin, async (req, res) => {
 
     // front-end Task
     // Mark a task as completed by a user and return updated completedTasks
-    app.patch("/task/complete",verifyToken,async (req, res) => {
+    app.patch("/task/complete", verifyToken, async (req, res) => {
       try {
         const { userId, taskId } = req.body;
 
@@ -852,7 +888,7 @@ app.get("/total-payouts",verifyToken,verifyAdmin, async (req, res) => {
     // GET completed tasks for a user with full task details
 
     // Get completed tasks for a user
-    app.get("/tasks/complete/:userId",verifyToken, async (req, res) => {
+    app.get("/tasks/complete/:userId", verifyToken, async (req, res) => {
       try {
         const { userId } = req.params;
 
@@ -918,7 +954,7 @@ app.get("/total-payouts",verifyToken,verifyAdmin, async (req, res) => {
 
     // pay user
     // Pay user a certain amount
-    app.post("/tasks/pay-user",verifyToken, async (req, res) => {
+    app.post("/tasks/pay-user", verifyToken, async (req, res) => {
       try {
         const { userId, amount } = req.body;
 
@@ -971,7 +1007,7 @@ app.get("/total-payouts",verifyToken,verifyAdmin, async (req, res) => {
 
     //  gateway Start
     // payment gateway route
-    app.post("/payment-gateway",verifyToken,verifyAdmin, async (req, res) => {
+    app.post("/payment-gateway", verifyToken, verifyAdmin, async (req, res) => {
       try {
         const gatewayData = req.body;
 
@@ -1001,7 +1037,7 @@ app.get("/total-payouts",verifyToken,verifyAdmin, async (req, res) => {
       }
     });
     // GET all payment gateways
-    app.get("/payment-gateway",verifyToken,verifyAdmin, async (req, res) => {
+    app.get("/payment-gateway", verifyToken, async (req, res) => {
       try {
         const gateways = await gatewayCollections.find().toArray();
 
@@ -1019,40 +1055,45 @@ app.get("/total-payouts",verifyToken,verifyAdmin, async (req, res) => {
       }
     });
 
-    app.delete("/payment-gateway/:id",verifyToken,verifyAdmin, async (req, res) => {
-      try {
-        const id = req.params.id;
+    app.delete(
+      "/payment-gateway/:id",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
 
-        const query = { _id: new ObjectId(id) };
+          const query = { _id: new ObjectId(id) };
 
-        const result = await gatewayCollections.deleteOne(query);
+          const result = await gatewayCollections.deleteOne(query);
 
-        if (result.deletedCount === 0) {
-          return res.status(404).send({
+          if (result.deletedCount === 0) {
+            return res.status(404).send({
+              success: false,
+              message: "Gateway not found",
+            });
+          }
+
+          res.send({
+            success: true,
+            message: "Gateway deleted successfully",
+            result,
+          });
+        } catch (error) {
+          console.error("Delete Gateway Error:", error);
+
+          res.status(500).send({
             success: false,
-            message: "Gateway not found",
+            message: "Server Error",
           });
         }
-
-        res.send({
-          success: true,
-          message: "Gateway deleted successfully",
-          result,
-        });
-      } catch (error) {
-        console.error("Delete Gateway Error:", error);
-
-        res.status(500).send({
-          success: false,
-          message: "Server Error",
-        });
-      }
-    });
+      },
+    );
 
     // gateway END
 
     // offer start-------------
-    app.post("/offer",verifyToken,verifyAdmin, async (req, res) => {
+    app.post("/offer", verifyToken, verifyAdmin, async (req, res) => {
       try {
         const offerData = req.body;
 
@@ -1084,7 +1125,7 @@ app.get("/total-payouts",verifyToken,verifyAdmin, async (req, res) => {
       }
     });
 
-    app.get("/offers",verifyToken, async (req, res) => {
+    app.get("/offers", verifyToken, async (req, res) => {
       try {
         const offers = await offerCollections
           .find() // get all offers
@@ -1103,7 +1144,7 @@ app.get("/total-payouts",verifyToken,verifyAdmin, async (req, res) => {
         });
       }
     });
-    app.delete("/offer/:id",verifyToken,verifyAdmin, async (req, res) => {
+    app.delete("/offer/:id", verifyToken, verifyAdmin, async (req, res) => {
       try {
         const offerId = req.params.id;
 
@@ -1143,147 +1184,374 @@ app.get("/total-payouts",verifyToken,verifyAdmin, async (req, res) => {
     // dashboard login system
 
     app.post("/login-dashboard", async (req, res) => {
-  try {
-    const { email, password } = req.body;
+      try {
+        const { email, password } = req.body;
 
-    // Validation
-    if (!email && !password) {
-      return res.status(400).json({
-        success: false,
-        message: "Email or Passwrod is required",
-      });
-    }
+        // Validation
+        if (!email && !password) {
+          return res.status(400).json({
+            success: false,
+            message: "Email or Passwrod is required",
+          });
+        }
 
-   
+        // Find user
+        const query = email ? { email } : { phone };
+        const user = await usersCollections.findOne(query);
 
-    // Find user
-    const query = email ? { email } : { phone };
-    const user = await usersCollections.findOne(query);
+        if (!user) {
+          return res.status(404).json({
+            success: false,
+            message: "User not found",
+          });
+        }
 
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found",
-      });
-    }
+        // Compare password
+        const isMatch = await bcrypt.compare(password, user.password);
 
-    // Compare password
-    const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) {
+          return res.status(401).json({
+            success: false,
+            message: "Invalid credentials",
+          });
+        }
 
-    if (!isMatch) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid credentials",
-      });
-    }
+        // Generate JWT Token
+        const token = jwt.sign(
+          {
+            userId: user.userId,
+            email: user.email,
+            role: user.role,
+          },
+          process.env.JWT_SECRET,
+          { expiresIn: "7d" },
+        );
 
-    // Generate JWT Token
-    const token = jwt.sign(
-      {
-        userId: user.userId,
-        email: user.email,
-        role: user.role,
+        res.status(200).json({
+          success: true,
+          message: "Login successful",
+          token,
+          user: {
+            userId: user.userId,
+            email: user.email,
+            phone: user.phone,
+            role: user.role,
+            level: user.level,
+            status: user.status,
+          },
+        });
+      } catch (error) {
+        console.error("Login Error:", error);
+        res.status(500).json({
+          success: false,
+          message: "Server Error",
+        });
+      }
+    });
+    app.post("/create-admin", async (req, res) => {
+      try {
+        const { email, password, phone } = req.body;
+
+        // ✅ Validation
+        if (!email && !password) {
+          return res.status(400).json({
+            success: false,
+            message: "Email and Password are required",
+          });
+        }
+
+        // ✅ Check existing user
+        const existingUser = await adminCollections.findOne({
+          $or: [{ email }, { phone }],
+        });
+
+        if (existingUser) {
+          return res.status(409).json({
+            success: false,
+            message: "User already exists",
+          });
+        }
+
+        // ✅ Hash password
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        // ✅ Create user object
+        const newUser = {
+          email,
+          phone: phone || null,
+          password: hashedPassword,
+          role: "Admin",
+          status: "active",
+          createdAt: new Date(),
+        };
+
+        // ✅ Insert user
+        await usersCollections.insertOne(newUser);
+
+        // ✅ Generate Token (optional)
+        const token = jwt.sign(
+          {
+            email: newUser.email,
+            role: newUser.role,
+          },
+          process.env.JWT_SECRET,
+          { expiresIn: "7d" },
+        );
+
+        // ✅ Response
+        res.status(201).json({
+          success: true,
+          message: "User created successfully",
+          token,
+          user: {
+            email: newUser.email,
+            phone: newUser.phone,
+            role: newUser.role,
+
+            status: newUser.status,
+          },
+        });
+      } catch (error) {
+        console.error("Create User Error:", error);
+
+        res.status(500).json({
+          success: false,
+          message: "Server Error",
+        });
+      }
+    });
+
+    // payout
+    // CREATE PAYOUT REQUEST (USER)
+    app.post("/payout-request", verifyToken, async (req, res) => {
+      try {
+        const { userId, wallet, walletNumber, accountType, amount } = req.body;
+
+        // ✅ Validation
+        if (!userId || !wallet || !walletNumber || !accountType || !amount) {
+          return res.status(400).json({
+            success: false,
+            message: "All fields are required",
+          });
+        }
+
+        if (amount <= 0) {
+          return res.status(400).json({
+            success: false,
+            message: "Amount must be greater than 0",
+          });
+        }
+
+        // ✅ Find user
+        const user = await usersCollections.findOne({ userId });
+
+        if (!user) {
+          return res.status(404).json({
+            success: false,
+            message: "User not found",
+          });
+        }
+
+        // ✅ Check balance
+        if ((user.available_balance || 0) < amount) {
+          return res.status(400).json({
+            success: false,
+            message: "Insufficient balance",
+          });
+        }
+
+        // ✅ Create payout request
+        const payoutRequest = {
+          userId,
+          wallet,
+          walletNumber,
+          accountType,
+          amount: Number(amount),
+          status: "Pending",
+          createdAt: dayjs().tz("Asia/Dhaka").toDate(), // 🇧🇩 BD Time
+        };
+
+        const result = await payOutRequestCollections.insertOne(payoutRequest);
+
+        res.status(201).json({
+          success: true,
+          message: "Payout request submitted",
+          data: result,
+        });
+      } catch (error) {
+        console.error("Payout Request Error:", error);
+        res.status(500).json({
+          success: false,
+          message: "Server Error",
+        });
+      }
+    });
+    app.get("/payout-requests", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const { status, userId } = req.query;
+
+        let filter = {};
+
+        // ✅ Filter by status (Pending / Approved / Rejected)
+        if (status) {
+          filter.status = status;
+        }
+
+        // ✅ Filter by userId
+        if (userId) {
+          filter.userId = userId;
+        }
+
+        const requests = await payOutRequestCollections
+          .find(filter)
+          .sort({ createdAt: -1 }) // 🔥 latest first
+          .toArray();
+
+        res.status(200).json({
+          success: true,
+          total: requests.length,
+          data: requests,
+        });
+      } catch (error) {
+        console.error("Get Payout Requests Error:", error);
+        res.status(500).json({
+          success: false,
+          message: "Server Error",
+        });
+      }
+    });
+    app.get("/user-payout", verifyToken, async (req, res) => {
+      try {
+        const { status, userId } = req.query;
+
+        let filter = {};
+
+        // ✅ Filter by status (Pending / Approved / Rejected)
+        if (status) {
+          filter.status = status;
+        }
+
+        // ✅ Filter by userId
+        if (userId) {
+          filter.userId = userId;
+        }
+
+        const requests = await payOutRequestCollections
+          .find(filter)
+          .sort({ createdAt: -1 }) // 🔥 latest first
+          .toArray();
+
+        res.status(200).json({
+          success: true,
+          total: requests.length,
+          data: requests,
+        });
+      } catch (error) {
+        console.error("Get Payout Requests Error:", error);
+        res.status(500).json({
+          success: false,
+          message: "Server Error",
+        });
+      }
+    });
+    app.patch(
+      "/payout-request/:id",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const { status } = req.body;
+
+          // ✅ allowed status only
+          const allowedStatus = ["Completed", "Rejected"];
+
+          if (!allowedStatus.includes(status)) {
+            return res.status(400).json({
+              success: false,
+              message: "Invalid status",
+            });
+          }
+
+          // ✅ find payout request
+          const payout = await payOutRequestCollections.findOne({
+            _id: new ObjectId(id),
+          });
+
+          if (!payout) {
+            return res.status(404).json({
+              success: false,
+              message: "Payout request not found",
+            });
+          }
+
+          // ✅ prevent double action
+          if (payout.status !== "Pending") {
+            return res.status(400).json({
+              success: false,
+              message: "Payout already processed",
+            });
+          }
+
+          /**
+           * ===============================
+           * ✅ IF APPROVED → DEDUCT BALANCE
+           * ===============================
+           */
+          if (status === "Completed") {
+            const user = await usersCollections.findOne({
+              userId: payout.userId,
+            });
+
+            if (!user) {
+              return res.status(404).json({
+                success: false,
+                message: "User not found",
+              });
+            }
+
+            if ((user.available_balance || 0) < payout.amount) {
+              return res.status(400).json({
+                success: false,
+                message: "Insufficient balance",
+              });
+            }
+
+            // await usersCollections.updateOne(
+            //   { userId: payout.userId },
+            //   {
+            //     $inc: {
+            //       available_balance: -payout.amount,
+            //     },
+            //   }
+            // );
+          }
+
+          const result = await payOutRequestCollections.updateOne(
+            { _id: new ObjectId(id) },
+            {
+              $set: {
+                status,
+                processedAt: dayjs().tz("Asia/Dhaka").toDate(),
+              },
+            },
+          );
+
+          res.status(200).json({
+            success: true,
+            message: `Payout ${status} successfully`,
+            data: result,
+          });
+        } catch (error) {
+          console.error("Update Payout Status Error:", error);
+          res.status(500).json({
+            success: false,
+            message: "Server Error",
+          });
+        }
       },
-      process.env.JWT_SECRET,
-      { expiresIn: "7d" }
     );
 
-    res.status(200).json({
-      success: true,
-      message: "Login successful",
-      token,
-      user: {
-        userId: user.userId,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-        level: user.level,
-        status: user.status,
-      },
-    });
-  } catch (error) {
-    console.error("Login Error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server Error",
-    });
-  }
-});
-app.post("/create-admin", async (req, res) => {
-  try {
-    const { email, password ,phone} = req.body;
-
-    // ✅ Validation
-    if (!email && !password) {
-      return res.status(400).json({
-        success: false,
-        message: "Email and Password are required",
-      });
-    }
-
-    // ✅ Check existing user
-    const existingUser = await adminCollections.findOne({
-      $or: [{ email }, { phone }],
-    });
-
-    if (existingUser) {
-      return res.status(409).json({
-        success: false,
-        message: "User already exists",
-      });
-    }
-
-    // ✅ Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // ✅ Create user object
-    const newUser = {
-     
-      email,
-      phone: phone || null,
-      password: hashedPassword,
-      role: "Admin",
-      status: "active",
-      createdAt: new Date(),
-    };
-
-    // ✅ Insert user
-    await usersCollections.insertOne(newUser);
-
-    // ✅ Generate Token (optional)
-    const token = jwt.sign(
-      {
-        
-        email: newUser.email,
-        role: newUser.role,
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: "7d" }
-    );
-
-    // ✅ Response
-    res.status(201).json({
-      success: true,
-      message: "User created successfully",
-      token,
-      user: {
-      
-        email: newUser.email,
-        phone: newUser.phone,
-        role: newUser.role,
-       
-        status: newUser.status,
-      },
-    });
-  } catch (error) {
-    console.error("Create User Error:", error);
-
-    res.status(500).json({
-      success: false,
-      message: "Server Error",
-    });
-  }
-});
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
     console.log(
