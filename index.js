@@ -90,6 +90,7 @@ async function run() {
     const payOutRequestCollections = abcDB.collection(
       "payOutRequestCollection",
     );
+    const bannerCollections = abcDB.collection("bannerCollections");
     const adminCollections = abcDB.collection("adminCollections");
 
     // user--------------------------------------------------------
@@ -1551,6 +1552,100 @@ async function run() {
         }
       },
     );
+    //  Banner api
+    app.post("/banner", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const { imageUrl } = req.body;
+
+        // ✅ Validation
+        if (!imageUrl) {
+          return res.status(400).json({
+            success: false,
+            message: "Banner Image required",
+          });
+        }
+
+        // ✅ Banner Object
+        const bannerData = {
+          imageUrl,
+        };
+
+        // ✅ Insert into DB
+        const result = await bannerCollections.insertOne(bannerData);
+
+        res.status(201).json({
+          success: true,
+          message: "Banner Added successfully",
+          data: result,
+        });
+      } catch (error) {
+        console.error("Banner Create Error:", error);
+
+        res.status(500).json({
+          success: false,
+          message: "Failed to create banner",
+        });
+      }
+    });
+   app.get("/banner", verifyToken, async (req, res) => {
+  try {
+    // ✅ Get ALL banners
+    const banners = await bannerCollections
+      .find({})
+      .sort({ createdAt: -1 }) 
+      .toArray();
+
+    res.status(200).json({
+      success: true,
+      data: banners,
+    });
+  } catch (error) {
+    console.error("Get Banner Error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch banner",
+    });
+  }
+});
+app.delete("/banner/:id", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // ✅ Validate ID
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid banner id",
+      });
+    }
+
+    // ✅ Delete Banner
+    const result = await bannerCollections.deleteOne({
+      _id: new ObjectId(id),
+    });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Banner not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Banner deleted successfully",
+    });
+  } catch (error) {
+    console.error("Delete Banner Error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to delete banner",
+    });
+  }
+});
+
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
