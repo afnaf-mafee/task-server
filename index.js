@@ -19,7 +19,7 @@ console.log(process.env.JWT_SECRET);
 dayjs.extend(utc);
 dayjs.extend(timezone);
 const uri = process.env.MONGO_DB;
-console.log(uri);
+
 const verifyToken = (req, res, next) => {
   const authHeader = req.headers.authorization;
 
