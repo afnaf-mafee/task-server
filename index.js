@@ -92,6 +92,7 @@ async function run() {
     );
     const bannerCollections = abcDB.collection("bannerCollections");
     const adminCollections = abcDB.collection("adminCollections");
+    const notificationCollections = abcDB.collection("notificationCollections")
 
     // user--------------------------------------------------------
 
@@ -528,7 +529,12 @@ async function run() {
 
         const updatedUser = await usersCollections.findOneAndUpdate(
           { userId },
-          { $inc: { available_balance: Number(amount) } },
+          {
+            $inc: {
+              available_balance: Number(amount),
+             deposit_balance: Number(amount), // ✅ new field added
+            },
+          },
           { returnDocument: "after" },
         );
 
@@ -739,7 +745,7 @@ async function run() {
         });
       }
     });
-    app.get("/tasks", verifyToken, async (req, res) => {
+    app.get("/tasks", async (req, res) => {
       const tasks = await tasksCollections.find().toArray();
 
       res.send({
@@ -1126,7 +1132,7 @@ async function run() {
       }
     });
 
-    app.get("/offers", verifyToken, async (req, res) => {
+    app.get("/offers", async (req, res) => {
       try {
         const offers = await offerCollections
           .find() // get all offers
@@ -1587,66 +1593,194 @@ async function run() {
         });
       }
     });
-   app.get("/banner", verifyToken, async (req, res) => {
+    app.get("/banner", async (req, res) => {
+      try {
+        // ✅ Get ALL banners
+        const banners = await bannerCollections
+          .find({})
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.status(200).json({
+          success: true,
+          data: banners,
+        });
+      } catch (error) {
+        console.error("Get Banner Error:", error);
+
+        res.status(500).json({
+          success: false,
+          message: "Failed to fetch banner",
+        });
+      }
+    });
+    app.delete("/banner/:id", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        // ✅ Validate ID
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid banner id",
+          });
+        }
+
+        // ✅ Delete Banner
+        const result = await bannerCollections.deleteOne({
+          _id: new ObjectId(id),
+        });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).json({
+            success: false,
+            message: "Banner not found",
+          });
+        }
+
+        res.status(200).json({
+          success: true,
+          message: "Banner deleted successfully",
+        });
+      } catch (error) {
+        console.error("Delete Banner Error:", error);
+
+        res.status(500).json({
+          success: false,
+          message: "Failed to delete banner",
+        });
+      }
+    });
+
+    // notification Modal
+    // SEND NOTIFICATION (ADMIN)
+app.post(
+  "/notifications",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { title, message, userId } = req.body;
+
+      if (!title || !message ) {
+        return res.status(400).json({
+          success: false,
+          message: "Title, UserId and message required",
+        });
+      }
+
+      const notification = {
+        title,
+        message,
+        userId: userId|| "all", // send to all users
+        isRead: false,
+        createdAt: new Date(),
+      };
+
+      await notificationCollections.insertOne(notification);
+
+      res.status(201).json({
+        success: true,
+        message: "Notification sent successfully",
+      });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({
+        success: false,
+        message: "Server Error",
+      });
+    }
+  }
+);
+// GET USER NOTIFICATIONS
+app.get("/notifications", verifyToken, async (req, res) => {
   try {
-    // ✅ Get ALL banners
-    const banners = await bannerCollections
-      .find({})
-      .sort({ createdAt: -1 }) 
+    const { userId,} = req.query;
+
+    let query = {};
+
+    // 🔍 search by userId (partial match)
+    if (userId) {
+      query.userId = { $regex: userId, $options: "i" };
+    }
+
+  
+
+    const notifications = await notificationCollections
+      .find(query)
+      .sort({ createdAt: -1 })
       .toArray();
 
     res.status(200).json({
       success: true,
-      data: banners,
+      total: notifications.length,
+      data: notifications,
     });
   } catch (error) {
-    console.error("Get Banner Error:", error);
-
+    console.error(error);
     res.status(500).json({
       success: false,
-      message: "Failed to fetch banner",
+      message: "Server Error",
     });
   }
 });
-app.delete("/banner/:id", verifyToken, verifyAdmin, async (req, res) => {
+app.get("/user-notification/:userId", verifyToken, async (req, res) => {
   try {
-    const { id } = req.params;
-
-    // ✅ Validate ID
-    if (!ObjectId.isValid(id)) {
+    const { userId } = req.params;
+        
+    if (!userId) {
       return res.status(400).json({
         success: false,
-        message: "Invalid banner id",
+        message: "userId is required",
       });
     }
 
-    // ✅ Delete Banner
-    const result = await bannerCollections.deleteOne({
+  
+
+    const notifications = await notificationCollections
+      .find()
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.status(200).json({
+      success: true,
+      total: notifications.length,
+      data: notifications,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+});
+
+app.delete("/notifications/:id", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await notificationCollections.deleteOne({
       _id: new ObjectId(id),
     });
 
     if (result.deletedCount === 0) {
       return res.status(404).json({
         success: false,
-        message: "Banner not found",
+        message: "Notification not found",
       });
     }
 
-    res.status(200).json({
+    res.json({
       success: true,
-      message: "Banner deleted successfully",
+      message: "Notification deleted successfully",
     });
   } catch (error) {
-    console.error("Delete Banner Error:", error);
-
     res.status(500).json({
       success: false,
-      message: "Failed to delete banner",
+      message: "Server error",
     });
   }
 });
-
-
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
     console.log(
