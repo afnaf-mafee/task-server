@@ -6,10 +6,11 @@ const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const dayjs = require("dayjs");
 const utc = require("dayjs/plugin/utc");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const timezone = require("dayjs/plugin/timezone");
 
 const port = 5000;
-const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+
 
 // middleware
 app.use(cors());
@@ -17,7 +18,8 @@ app.use(express.json());
 console.log(process.env.JWT_SECRET);
 dayjs.extend(utc);
 dayjs.extend(timezone);
-const uri = "mongodb://localhost:27017";
+const uri = process.env.MONGO_DB;
+console.log(uri);
 const verifyToken = (req, res, next) => {
   const authHeader = req.headers.authorization;
 
