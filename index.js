@@ -3,6 +3,12 @@ const express = require("express");
 const app = express();
 const bcrypt = require("bcryptjs");
 const cors = require("cors");
+const corsConfig = {
+  origin : "*",
+  credential : true,
+  methods : ["GET","POST","PATCH","PUT","DELETE"]
+}
+app.options("",cors(corsConfig))
 const jwt = require("jsonwebtoken");
 const dayjs = require("dayjs");
 const utc = require("dayjs/plugin/utc");
@@ -13,9 +19,9 @@ const port = 5000;
 
 
 // middleware
-app.use(cors());
+app.use(cors(corsConfig));
 app.use(express.json());
-console.log(process.env.JWT_SECRET);
+
 dayjs.extend(utc);
 dayjs.extend(timezone);
 const uri = process.env.MONGO_DB;
