@@ -3,23 +3,24 @@ const express = require("express");
 const app = express();
 const bcrypt = require("bcryptjs");
 const cors = require("cors");
-const corsConfig = {
-  origin : "*",
-  credential : true,
-  methods : ["GET","POST","PATCH","PUT","DELETE"]
-}
-app.options("",cors(corsConfig))
+
 const jwt = require("jsonwebtoken");
 const dayjs = require("dayjs");
 const utc = require("dayjs/plugin/utc");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const timezone = require("dayjs/plugin/timezone");
 
-const port = 5000;
+const port = process.env.PORT || 5000;
 
 
 // middleware
-app.use(cors(corsConfig));
+app.use(cors({
+  origin: [
+    "http://localhost:5173",
+    "https://task-front-end-eta.vercel.app"
+  ],
+  credentials: true,
+}));
 app.use(express.json());
 
 dayjs.extend(utc);
@@ -103,7 +104,7 @@ async function run() {
     const notificationCollections = abcDB.collection("notificationCollections")
 
     // user--------------------------------------------------------
-
+      
     // GET /all-users?userId=8392746150
     app.get("/all-users", verifyToken, verifyAdmin, async (req, res) => {
       try {
@@ -137,6 +138,11 @@ async function run() {
         });
       }
     });
+    app.get('/abc',(req,res) => {
+      res.send({
+        abc: true
+      })
+    })
     // single user
 
     app.get("/user/:id", verifyToken, verifyAdmin, async (req, res) => {
@@ -1804,6 +1810,4 @@ app.get("/", (req, res) => {
   res.send("Server is running....");
 });
 
-app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`);
-});
+app.listen(port);
